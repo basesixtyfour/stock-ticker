@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <title>WebSocket STOMP Stock Demo</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Bootstrap (CDN) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap-theme.min.css" />
+</head>
+
+<body lang="en">
+  <div class="vertical-center">
+    <div class="container">
+      <div class="well">
+        <form role="form" class="form-inline" id="add_form">
+          <div class="form-group">
+            <input class="form-control" type="text" id="symbol" name="symbol" placeholder="Stock symbol: i.e. AAPL"
+              autofocus />
+          </div>
+          <button type="submit" class="btn btn-primary">Add</button>
+        </form>
+      </div>
+
+      <table class="table" id="stockTable">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Price</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="stockRows">
+          <tr id="norows">
+            <td colspan="3">No stocks found, add one above</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="text-right">
+        <p>
+          <a id="connection" class="btn btn-danger" href="#">Offline</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STOMP.js (browser build) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+
+  <script>
+    let ws;
+    let stompClient;
+    const stocks = {};
+    let online = false;
+
+    function initWebSocket() {
+      ws = new WebSocket("ws://localhost:8181/");
+      stompClient = Stomp.over(ws);
+
+      stompClient.connect(
+        {},
+        frame => {
+          statusChange(true);
+        },
+        error => {
+          console.error("Connection error:", error);
+          statusChange(false);
+        }
+      );
+
+      ws.onclose = () => statusChange(false);
+    }
+
+    function subscribe(symbol) {
+      if (!symbol) return;
+
+      if (stocks.hasOwnProperty(symbol)) {
+        alert(`You already added the ${symbol} symbol`);
+        return;
+      }
+
+      stocks[symbol] = 0.0;
+
+      stompClient.subscribe(`/queue/stocks.${symbol}`, message => {
+        try {
+          const content = JSON.parse(message.body);
+          updateStockPrice(symbol, stocks[symbol], content.price);
+          stocks[symbol] = content.price;
+        } catch (ex) {
+          console.error("Message parse error:", ex);
+        }
+      }, { id: `sub-${symbol}` });
+
+      addStockRow(symbol);
+
+      document.getElementById("symbol").value = "";
+      document.getElementById("symbol").focus();
+    }
+
+    function addStockRow(symbol) {
+      const tbody = document.getElementById("stockRows");
+      const norows = document.getElementById("norows");
+      if (norows) norows.classList.add("hidden");
+
+      const newRow = tbody.insertRow();
+      newRow.id = `${symbol}_row`;
+      newRow.innerHTML = `
+        <td><h3>${symbol}</h3></td>
+        <td id="${symbol}"><h3><span class="label label-default">Retrieving..</span></h3></td>
+        <td><button class="btn btn-danger" onclick="unsubscribe('${symbol}')">Remove</button></td>
+      `;
+    }
+
+    function unsubscribe(symbol) {
+      stompClient.unsubscribe(`/queue/stocks.${symbol}`);
+      document.getElementById(`${symbol}_row`).remove();
+      delete stocks[symbol];
+
+      if (Object.keys(stocks).length === 0) {
+        document.getElementById("norows").classList.remove("hidden");
+      }
+    }
+
+    function updateStockPrice(symbol, oldVal, newVal) {
+      const valElem = document.getElementById(symbol);
+      if (!valElem) return;
+
+      valElem.textContent = newVal.toFixed(2);
+
+      const lostValue = newVal < oldVal;
+      valElem.classList.toggle("label-danger", lostValue);
+      valElem.classList.toggle("label-success", !lostValue);
+    }
+
+    function statusChange(newStatus) {
+      const btn = document.getElementById("connection");
+      btn.textContent = newStatus ? "Online" : "Offline";
+      btn.classList.toggle("btn-success", newStatus);
+      btn.classList.toggle("btn-danger", !newStatus);
+      online = newStatus;
+    }
+
+    function logoff() {
+      if (stompClient && online) {
+        stompClient.disconnect(() => statusChange(false));
+      }
+      return false;
+    }
+
+    // Event bindings
+    document.getElementById("add_form").addEventListener("submit", e => {
+      e.preventDefault();
+      const symbol = document.getElementById("symbol").value.trim().toUpperCase();
+      subscribe(symbol);
+    });
+
+    document.getElementById("connection").addEventListener("click", e => {
+      e.preventDefault();
+      if (online) logoff();
+      else initWebSocket();
+    });
+  </script>
+</body>
+
+</html>
